@@ -95,7 +95,95 @@ export default function ImageCanvas({ imageUrl }: ImageCanvasProps) {
         }
       });
     }
-  }, [selectedLineIndex]);
+  }, [selectedLineIndex, selectedTextBoxId]);
+  
+  // Function to delete the currently selected item (line or text box)
+  const deleteSelectedItem = () => {
+    if (selectedLineIndex !== null) {
+      // Delete the selected line
+      const updatedLines = [...lines];
+      
+      // Get the segment ID of the line we're deleting
+      const lineToDelete = lines[selectedLineIndex];
+      const segmentId = lineToDelete.segmentId;
+      
+      if (segmentId) {
+        // If this is part of a segment, we need to handle connected lines
+        // Find all lines in this segment
+        const segmentLines = lines.filter(line => line.segmentId === segmentId);
+        
+        if (segmentLines.length > 1) {
+          // If there are multiple lines in this segment, we need to update isEndSegment flags
+          // Find if we're deleting a middle segment
+          const isMiddleSegment = !lineToDelete.isEndSegment;
+          
+          if (isMiddleSegment) {
+            // If deleting a middle segment, we need to disconnect the segment into two parts
+            // Create a new segment ID for the second part
+            const newSegmentId = generateSegmentId();
+            
+            // Find the split point
+            let foundDeletedLine = false;
+            updatedLines.forEach((line, index) => {
+              if (line.segmentId === segmentId) {
+                if (index === selectedLineIndex) {
+                  foundDeletedLine = true;
+                } else if (foundDeletedLine) {
+                  // This line comes after the deleted line, assign it to a new segment
+                  updatedLines[index] = {
+                    ...line,
+                    segmentId: newSegmentId
+                  };
+                }
+              }
+            });
+          }
+        }
+      }
+      
+      // Remove the line
+      updatedLines.splice(selectedLineIndex, 1);
+      setLines(updatedLines);
+      setSelectedLineIndex(null);
+    } else if (selectedTextBoxId !== null) {
+      // Delete the selected text box
+      setTextBoxes(prev => prev.filter(box => box.id !== selectedTextBoxId));
+      setSelectedTextBoxId(null);
+    }
+    
+    // Force redraw
+    drawLines();
+  };
+  
+  // Handle keyboard events
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Delete key or Backspace to delete selected item
+      if ((e.key === 'Delete' || e.key === 'Backspace') && (selectedLineIndex !== null || selectedTextBoxId !== null)) {
+        // Only process if we're not editing a text box
+        const textEditor = document.getElementById('text-editor');
+        if (!textEditor) {
+          e.preventDefault();
+          deleteSelectedItem();
+        }
+      }
+      
+      // Escape key to deselect
+      if (e.key === 'Escape') {
+        setSelectedLineIndex(null);
+        setSelectedTextBoxId(null);
+        setIsAddingTextBox(false);
+        drawLines();
+      }
+    };
+    
+    // Add keyboard event listener for delete key
+    window.addEventListener('keydown', handleKeyDown);
+    
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [lines, selectedLineIndex, textBoxes, selectedTextBoxId]);
 
   const drawLines = () => {
     const canvas = canvasRef.current;
@@ -633,35 +721,40 @@ export default function ImageCanvas({ imageUrl }: ImageCanvasProps) {
   };
   
   const findClickedLine = (position: Point): number | null => {
-    // Check each line to see if the click is near it
+    const selectionThreshold = 8; // Distance threshold for clicking near a line
+    
+    // Check each line to see if the click is near it (from top to bottom to select the topmost line)
     for (let i = lines.length - 1; i >= 0; i--) {
       const line = lines[i];
       
       // For curved lines, check distance to the quadratic curve
-      if (line.curvature !== 0 && line.controlPoint) {
+      if (line.curvature !== 0) {
+        // Calculate control point if not already set
+        const controlPoint = line.controlPoint || calculateControlPoint(line.start, line.end, line.curvature);
+        
         // Simple approximation - check distance to control point and endpoints
-        const distToControl = distanceToPoint(position, line.controlPoint);
+        const distToControl = distanceToPoint(position, controlPoint);
         const distToStart = distanceToPoint(position, line.start);
         const distToEnd = distanceToPoint(position, line.end);
         
-        if (distToControl < 10 || distToStart < 10 || distToEnd < 10) {
+        if (distToControl < selectionThreshold || distToStart < selectionThreshold || distToEnd < selectionThreshold) {
           return i;
         }
         
-        // More complex check - sample points along the curve
-        for (let t = 0.1; t < 1; t += 0.1) {
+        // More complex check - sample points along the curve with smaller steps for better accuracy
+        for (let t = 0.05; t < 1; t += 0.05) {
           const pointOnCurve = {
-            x: Math.pow(1-t, 2) * line.start.x + 2 * (1-t) * t * line.controlPoint.x + Math.pow(t, 2) * line.end.x,
-            y: Math.pow(1-t, 2) * line.start.y + 2 * (1-t) * t * line.controlPoint.y + Math.pow(t, 2) * line.end.y
+            x: Math.pow(1-t, 2) * line.start.x + 2 * (1-t) * t * controlPoint.x + Math.pow(t, 2) * line.end.x,
+            y: Math.pow(1-t, 2) * line.start.y + 2 * (1-t) * t * controlPoint.y + Math.pow(t, 2) * line.end.y
           };
           
-          if (distanceToPoint(position, pointOnCurve) < 10) {
+          if (distanceToPoint(position, pointOnCurve) < selectionThreshold) {
             return i;
           }
         }
       } else {
         // For straight lines, check distance to the line segment
-        if (distanceToLineSegment(position, line.start, line.end) < 10) {
+        if (distanceToLineSegment(position, line.start, line.end) < selectionThreshold) {
           return i;
         }
       }
@@ -872,6 +965,16 @@ export default function ImageCanvas({ imageUrl }: ImageCanvasProps) {
             {isAddingTextBox ? 'Cancel Text Box' : 'Add Text Box'}
           </button>
           
+          {/* Delete button for selected elements */}
+          {(selectedLineIndex !== null || selectedTextBoxId !== null) && (
+            <button
+              onClick={deleteSelectedItem}
+              className="px-2 py-1 text-xs bg-red-100 hover:bg-red-200 text-red-700 rounded transition-colors"
+            >
+              Delete Selected
+            </button>
+          )}
+          
           {selectedLineIndex !== null && (
             <div className="flex items-center">
               <label htmlFor="curvature" className="text-xs mr-2">Curvature:</label>
@@ -924,17 +1027,7 @@ export default function ImageCanvas({ imageUrl }: ImageCanvasProps) {
               >
                 Edit Text
               </button>
-              <button
-                onClick={() => {
-                  // Delete the selected text box
-                  setTextBoxes(prev => prev.filter(box => box.id !== selectedTextBoxId));
-                  setSelectedTextBoxId(null);
-                  drawLines();
-                }}
-                className="px-2 py-1 text-xs bg-red-100 hover:bg-red-200 text-red-700 rounded transition-colors mr-2"
-              >
-                Delete
-              </button>
+
               <button
                 onClick={() => {
                   // Clear selection
@@ -951,20 +1044,36 @@ export default function ImageCanvas({ imageUrl }: ImageCanvasProps) {
           {(lines.length > 0 || textBoxes.length > 0) && (
             <button
               onClick={() => {
+                // Clear all state
                 setSelectedLineIndex(null);
                 setSelectedTextBoxId(null);
+                setCurrentLine(null);
+                setIsDrawing(false);
+                setExtendingLine(false);
+                setCurrentSegmentId(null);
+                setIsAddingTextBox(false);
+                setIsDraggingTextBox(false);
+                
+                // Clear all lines and text boxes
                 setLines([]);
                 setTextBoxes([]);
+                
                 // Force complete redraw
-                requestAnimationFrame(() => {
-                  if (canvasRef.current) {
-                    const ctx = canvasRef.current.getContext('2d');
-                    if (ctx) {
-                      ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-                      drawLines();
+                if (canvasRef.current) {
+                  const ctx = canvasRef.current.getContext('2d');
+                  if (ctx) {
+                    ctx.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+                    // Draw the image only
+                    if (imageRef.current && imageRef.current.complete) {
+                      ctx.drawImage(
+                        imageRef.current,
+                        0, 0,
+                        canvasRef.current.width,
+                        canvasRef.current.height
+                      );
                     }
                   }
-                });
+                }
               }}
               className="px-2 py-1 text-xs bg-gray-100 hover:bg-gray-200 rounded transition-colors"
             >
@@ -974,9 +1083,24 @@ export default function ImageCanvas({ imageUrl }: ImageCanvasProps) {
         </div>
       </div>
       
-      {lines.length > 0 && (
+      <div className="mt-4 p-3 bg-blue-50 rounded-md text-sm">
+        <h3 className="font-medium mb-1">Instructions:</h3>
+        <ul className="list-disc pl-5 space-y-1">
+          <li>Click and drag to draw arrows on the image</li>
+          <li>Click near the start or end of an existing arrow to extend it with a connected segment</li>
+          <li>Click on an arrow to select it and adjust its curvature</li>
+          <li>Click "Add Text Box" and then click on the image to add a text box</li>
+          <li>Double-click on a text box to edit its text</li>
+          <li>Click and drag to move text boxes</li>
+          <li>Select an arrow or text box and press Delete key (or use the Delete button) to remove it</li>
+          <li>Press Escape to deselect the current selection</li>
+          <li>The coordinates will be shown below for easy copying</li>
+        </ul>
+      </div>
+      
+      {(lines.length > 0 || textBoxes.length > 0) && (
         <div className="mt-4">
-          <h3 className="text-md font-medium mb-2">Arrow Coordinates</h3>
+          <h3 className="text-md font-medium mb-2">Coordinates</h3>
           <CoordinatesOutput 
             lines={lines}
             textBoxes={textBoxes}
