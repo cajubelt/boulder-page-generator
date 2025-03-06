@@ -41,9 +41,11 @@ export default function Home() {
               <ul className="list-disc pl-5 text-sm text-gray-700 space-y-1">
                 <li>Click and drag on the image to draw arrows</li>
                 <li>Arrows are drawn from the starting point to where you release the mouse</li>
-                <li>Click on an existing arrow to select it and adjust its curvature</li>
-                <li>Use the curvature slider to create curved arrows</li>
-                <li>The coordinates of each arrow will be displayed below the image</li>
+                <li>Click near the start or end point of an existing arrow to extend it with a new segment</li>
+                <li>Connected segments form a continuous path with one arrowhead at the end</li>
+                <li>Click on any arrow to select it and adjust its curvature</li>
+                <li>Use the curvature slider to create curved arrows (each segment can have its own curve)</li>
+                <li>The coordinates of all arrows will be displayed below the image</li>
                 <li>Use the "Clear All" button to remove all arrows</li>
               </ul>
             </div>
